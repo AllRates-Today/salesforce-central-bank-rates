@@ -10,7 +10,7 @@
 
 Full guide: **[allratestoday.com/docs/integrations/salesforce/](https://allratestoday.com/docs/integrations/salesforce/)**
 
-> This is open-source sample code, not a managed AppExchange package. It is written as conventional Apex for API 62.0 and its tests use callout mocks, but it has not yet been deployed to a production org from this repository. Deploy it to a sandbox or a free Developer Edition org, run the tests, and check the written rates before using it in production.
+> Open-source code, not a managed AppExchange package. Tested end to end on 2026-11-25 in a Developer Edition org (API 68.0, USD corporate currency, Advanced Currency Management on). The Apex tests pass with 89% coverage, the ECB table was loaded into dated rates and the RBI table into static rates, and reruns update rows instead of duplicating them. Try it in a sandbox before production.
 
 ## What it does
 
@@ -19,7 +19,9 @@ Full guide: **[allratestoday.com/docs/integrations/salesforce/](https://allrates
 - 📅 **Dated or static.** With Advanced Currency Management on, it upserts `DatedConversionRate`. With it off, it updates `CurrencyType.ConversionRate`.
 - 🧮 **Only currencies you use.** It writes active, non-corporate currencies the table covers. It never creates currencies.
 - 🕰️ **Historical load.** `ARTRateSyncBatch.historical(options, from, to)` loads the table in force on each weekday in a range. A holiday resolves to the previous table, and each table is written once.
-- 🔐 **No secrets in code.** The API key lives in a Named Credential (External Credential principal). There are no custom objects or settings, so options are passed in Apex.
+- 🔐 **No secrets in code.** The API key lives encrypted in an External Credential. There are no custom objects or settings, so options are passed in Apex.
+- 🧰 **One-command setup.** `scripts/setup-org.sh <alias>` deploys everything, including the credentials and permission sets, and asks for the two secrets.
+- 🚨 **Failures show in Apex Jobs.** If a write fails, the batch job fails with the error, not only in a debug log.
 - 🐍 **Or run it outside Salesforce.** [`scripts/python/sync_rates.py`](scripts/python/sync_rates.py) does the same thing over the REST API with the OAuth client credentials flow.
 
 ### Why the writes go through REST
@@ -49,29 +51,37 @@ Apex DML is not allowed on `DatedConversionRate` or `CurrencyType`. The classes 
 ```bash
 git clone https://github.com/AllRates-Today/salesforce-central-bank-rates.git
 cd salesforce-central-bank-rates
-sf org login web --alias rates-sandbox --instance-url https://test.salesforce.com
-sf project deploy start --target-org rates-sandbox
-sf apex run test --class-names ARTRateSyncTest --target-org rates-sandbox --result-format human
+sf org login web --alias myorg                 # add --instance-url https://test.salesforce.com for a sandbox
+./scripts/setup-org.sh myorg
+sf apex run test --class-names ARTRateSyncTest --target-org myorg --result-format human
 ```
 
-## Configure the two Named Credentials
+`setup-org.sh` needs the `sf` CLI and `python3`. It does five things:
 
-### 1. `AllRatesToday` (the rates API)
+1. It deploys `force-app`: the Apex classes, the **`AllRatesToday`** External Credential and Named Credential (`https://allratestoday.com`, sends `Authorization: Bearer <key>`), and the **`AllRatesToday_Rates`** permission set.
+2. It deploys `config/self-api` with your org's URL and username filled in:
+   - the **ART Rate Sync** External Client App (client credentials flow, run as you);
+   - the **`ART_Salesforce_API`** External Credential (OAuth 2.0, client credentials with client secret, token URL `<your domain>/services/oauth2/token`, no scope);
+   - its Named Credential (your domain, with *Generate Authorization Header* on);
+   - the **`ART_Salesforce_API_Access`** permission set.
+3. It assigns both permission sets to you.
+4. It asks for your AllRatesToday key and stores it, encrypted, on the `AllRatesToday` principal.
+5. It asks for the External Client App's **consumer secret** and stores it with the consumer key on the `ART_Salesforce_API` principal. Salesforce shows the secret only in Setup, under *External Client App Manager → ART Rate Sync → Settings → OAuth Settings → Consumer Key and Secret*, after an emailed code.
 
-1. **Setup → Named Credentials → External Credentials → New**: Label and Name `AllRatesToday`, Authentication Protocol **Custom**.
-2. In it, **Principals → New**: Parameter Name `Default`, Identity Type **Named Principal**. Add an authentication parameter named `ApiKey` with your key (`art_live_...`) as the value.
-3. **Custom Headers → New**: Name `Authorization`, Value `{!'Bearer ' & $Credential.AllRatesToday.ApiKey}`.
-4. **Named Credentials → New**: Label and Name `AllRatesToday`, URL `https://allratestoday.com`, External Credential `AllRatesToday`, and tick **Allow Formulas in HTTP Header**.
+It is safe to run again. Each step overwrites what is there.
 
-### 2. `ART_Salesforce_API` (this org's REST API)
+### Manual setup (without the script)
 
-1. Create an **External Client App** (or Connected App) with OAuth enabled, scope `api`, and **Enable Client Credentials Flow**. Set the run-as user to an admin who can manage currencies (Customize Application).
-2. **External Credentials → New**: Name `ART_Salesforce_API`, protocol **OAuth 2.0**, flow **Client Credentials with Client Secret**, Identity Provider URL `https://<your-domain>.my.salesforce.com/services/oauth2/token`, scope `api`. Add a Named Principal with the app's consumer key and secret.
-3. **Named Credentials → New**: Name `ART_Salesforce_API`, URL `https://<your-domain>.my.salesforce.com`, External Credential `ART_Salesforce_API`, with **Generate Authorization Header** ticked.
+- **Rates API:** deploy `force-app`. Then open *Setup → Named Credentials → External Credentials → AllRatesToday → Principals → Default* and add an authentication parameter `ApiKey` with your key.
+- **This org's API:** create an External Client App with OAuth enabled (any callback URL) and **Enable Client Credentials Flow**, with a run-as user who can manage currencies. Then create an External Credential `ART_Salesforce_API`:
+  - Authentication Protocol **OAuth 2.0**
+  - Flow **Client Credentials with Client Secret**
+  - Identity Provider URL `https://<your-domain>.my.salesforce.com/services/oauth2/token`
+  - **leave Scope empty** (the token endpoint rejects it)
+  - a Named Principal `Default` with the consumer key and secret
 
-### 3. Principal access
-
-Create a permission set (for example *AllRatesToday Rates*). Under **External Credential Principal Access**, add `AllRatesToday - Default` and the `ART_Salesforce_API` principal. Assign it to the user who runs and schedules the job.
+  Then create a Named Credential `ART_Salesforce_API` with URL `https://<your-domain>.my.salesforce.com` and *Generate Authorization Header* ticked.
+- **Access:** give the running user principal access to `AllRatesToday - Default` and `ART_Salesforce_API - Default` (the two permission sets do this).
 
 ## Run
 
@@ -79,7 +89,7 @@ Create a permission set (for example *AllRatesToday Rates*). Under **External Cr
 
 ```apex
 ARTRateOptions o = new ARTRateOptions('ecb');          // bank or tax-authority code
-o.mode = ARTRateOptions.Mode.DATED;                    // or STATIC_RATES
+o.mode = ARTRateOptions.SyncMode.DATED;                 // or STATIC_RATES
 Database.executeBatch(new ARTRateSyncBatch(o), 1);     // latest table, now
 
 // weekdays 17:00 (scheduling user's time zone), after the ECB's ~16:00 CET publication

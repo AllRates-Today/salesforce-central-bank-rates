@@ -15,6 +15,8 @@ public with sharing class ARTRateSyncBatch implements Database.Batchable<String>
     private Set<Date> written = new Set<Date>();
     public List<String> log = new List<String>();
 
+    public class SyncException extends Exception {}
+
     public ARTRateSyncBatch(ARTRateOptions options) {
         this(options, new List<String>{ 'latest' });
     }
@@ -26,7 +28,7 @@ public with sharing class ARTRateSyncBatch implements Database.Batchable<String>
     }
 
     public static ARTRateSyncBatch historical(ARTRateOptions options, Date fromDate, Date toDate) {
-        if (options.mode != ARTRateOptions.Mode.DATED) throw new IllegalArgumentException('A historical load needs Mode.DATED.');
+        if (options.mode != ARTRateOptions.SyncMode.DATED) throw new IllegalArgumentException('A historical load needs SyncMode.DATED.');
         List<String> ds = new List<String>();
         for (Date d = fromDate; d <= toDate; d = d.addDays(1)) {
             // 2024-01-01 is a Monday; skip Saturdays (5) and Sundays (6).
@@ -46,6 +48,8 @@ public with sharing class ARTRateSyncBatch implements Database.Batchable<String>
             String msg = syncOne(d);
             log.add(msg);
             System.debug(LoggingLevel.INFO, 'AllRatesToday ' + options.bank + ' ' + d + ': ' + msg);
+            // Surface write failures in Setup > Apex Jobs (NumberOfErrors / ExtendedStatus), not only in the debug log.
+            if (msg.contains(', errors: ')) throw new SyncException(options.bank + ' ' + d + ': ' + msg.left(900));
         }
     }
 
@@ -57,12 +61,12 @@ public with sharing class ARTRateSyncBatch implements Database.Batchable<String>
     private String syncOne(String dateOrLatest) {
         ARTRateMapper.RateTable t = ARTRateMapper.parse(ARTRatesClient.fetchTable(options, dateOrLatest), options.rateType);
         // A holiday returns the previous table: write each rate_date once per run.
-        if (options.mode == ARTRateOptions.Mode.DATED && !written.add(t.rateDate)) {
+        if (options.mode == ARTRateOptions.SyncMode.DATED && !written.add(t.rateDate)) {
             return 'table ' + String.valueOf(t.rateDate) + ' already written in this run';
         }
         Map<String, Id> active = ARTSalesforceWriter.activeCurrencies();
         Map<String, Decimal> rates = ARTRateMapper.conversionRates(t, ARTSalesforceWriter.corporateCurrency(), active.keySet());
-        ARTSalesforceWriter.Result r = options.mode == ARTRateOptions.Mode.DATED
+        ARTSalesforceWriter.Result r = options.mode == ARTRateOptions.SyncMode.DATED
             ? ARTSalesforceWriter.writeDated(options, t.rateDate, rates)
             : ARTSalesforceWriter.writeStatic(options, rates, active);
         String msg = 'table ' + String.valueOf(t.rateDate) + ': ' + r.inserted + ' inserted, ' + r.updated + ' updated, '

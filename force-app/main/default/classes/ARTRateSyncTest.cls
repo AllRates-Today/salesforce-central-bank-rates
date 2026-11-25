@@ -100,7 +100,7 @@ private class ARTRateSyncTest {
                 System.assertEquals('2026-11-25', body.get('StartDate'));
             } else {
                 System.assertEquals('PATCH', w.getMethod());
-                System.assert(w.getEndpoint().endsWith('/DatedConversionRate/04w000000000002'));
+                System.assert(w.getEndpoint().contains('/DatedConversionRate/04w000000000002'), w.getEndpoint());   // Id becomes 18 chars
             }
         }
         System.assert(sawPost);
@@ -113,12 +113,19 @@ private class ARTRateSyncTest {
         Test.setMock(HttpCalloutMock.class, new Mock(RBI, 400));
         fakeOrg('EUR', new Map<String, Id>{ 'USD' => '02k000000000001' }, null);
         ARTRateOptions o = new ARTRateOptions('rbi');
-        o.mode = ARTRateOptions.Mode.STATIC_RATES;
+        o.mode = ARTRateOptions.SyncMode.STATIC_RATES;
         Test.startTest();
         String msg = new ARTRateSyncBatch(o).syncOne('latest');
         Test.stopTest();
         System.assert(msg.contains('stale'), msg);
         System.assert(msg.contains('errors: USD'), msg);
+        // Through the batch, failed writes fail the job so they show in Apex Jobs.
+        try {
+            new ARTRateSyncBatch(o).execute(null, new List<String>{ 'latest' });
+            System.assert(false, 'expected SyncException');
+        } catch (ARTRateSyncBatch.SyncException e) {
+            System.assert(e.getMessage().contains('errors: USD'), e.getMessage());
+        }
     }
 
     @IsTest

@@ -3,16 +3,16 @@
  * so the package needs no custom objects or custom settings.
  *
  *   ARTRateOptions o = new ARTRateOptions('ecb');   // bank or tax-authority code, lower case
- *   o.mode = ARTRateOptions.Mode.DATED;            // DatedConversionRate (Advanced Currency Management)
+ *   o.mode = ARTRateOptions.SyncMode.DATED;         // DatedConversionRate (Advanced Currency Management)
  *   o.rateType = null;                             // e.g. 'reference', 'buying', 'selling'; null = first per pair
  */
 public with sharing class ARTRateOptions {
-    public enum Mode { DATED, STATIC_RATES }
+    public enum SyncMode { DATED, STATIC_RATES }
 
     /** Bank or tax-authority code as used in /api/v1/central-bank/{bank}/..., e.g. ecb, boe, rbi, hmrc. */
     public String bank;
     /** DATED writes DatedConversionRate (needs Advanced Currency Management); STATIC_RATES updates CurrencyType. */
-    public Mode mode = Mode.DATED;
+    public SyncMode mode = SyncMode.DATED;
     /** Only use rows of this rate type. Null = the first row seen for each currency. */
     public String rateType;
     /** Named Credential for https://allratestoday.com (sends the Authorization header). */

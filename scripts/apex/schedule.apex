@@ -2,7 +2,7 @@
 
 // 1. Test once: load the latest ECB table now (check Setup > Apex Jobs, then Setup > Manage Currencies).
 ARTRateOptions o = new ARTRateOptions('ecb');          // any code from allratestoday.com/central-bank-rates-api/institutions/
-o.mode = ARTRateOptions.Mode.DATED;                    // or ARTRateOptions.Mode.STATIC_RATES without Advanced Currency Management
+o.mode = ARTRateOptions.SyncMode.DATED;                 // or ARTRateOptions.SyncMode.STATIC_RATES without Advanced Currency Management
 // o.rateType = 'selling';                             // for tables with buying/selling rows
 Database.executeBatch(new ARTRateSyncBatch(o), 1);
 
